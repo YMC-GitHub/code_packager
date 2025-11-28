@@ -18,7 +18,7 @@ on:
       package_name:
         description: '要清理的包名称'
         required: true
-        default: 'pass-craft'
+        default: 'code_packager'
         type: string
       dry_run:
         description: '仅显示将要删除的镜像，不实际删除'
@@ -48,7 +48,7 @@ jobs:
         run: |
           DAYS_OLD=${DAYS_OLD:-30}
           KEEP_MINIMUM=${KEEP_MINIMUM:-10}
-          PACKAGE_NAME=${PACKAGE_NAME:-pass-craft}
+          PACKAGE_NAME=${PACKAGE_NAME:-code_packager}
           DRY_RUN=${DRY_RUN:-false}
           
           echo "🗑️ 容器镜像清理配置:"

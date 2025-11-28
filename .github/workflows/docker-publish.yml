@@ -111,7 +111,7 @@ jobs:
         run: |
           echo "🔧 Debug mode: Saving image to workspace..."
           mkdir -p /tmp/debug-artifacts
-          cp /tmp/image.tar /tmp/debug-artifacts/pass-craft-debug.tar
+          cp /tmp/image.tar /tmp/debug-artifacts/code_packager-debug.tar
           echo "Image saved to /tmp/debug-artifacts/"
 
       - name: Upload debug artifacts
