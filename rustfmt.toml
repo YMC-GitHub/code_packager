@@ -1,0 +1,18 @@
+# 基本配置
+edition = "2021"
+max_width = 100
+tab_spaces = 4
+hard_tabs = false
+newline_style = "Native"
+
+# 启发式配置
+use_small_heuristics = "Default"  # 或 "Max"
+
+# 错误处理
+# error_on_line_overflow = false
+# error_on_unformatted = false
+
+# 空白字符配置
+# spaces_around_ranges = false
+# binop_separator = "Front"
+remove_nested_parens = true
