@@ -1,0 +1,42 @@
+**/target/
+**/.git/
+# **/.github/
+# **/Dockerfile*
+# **/docker-compose*
+**/.env
+**/*.log
+**/tmp/
+**/.DS_Store
+**/*.tar.gz
+**/*.zip
+
+!.dockerignore
+# !Cargo.toml
+Cargo.lock
+.cargo
+!src/
+
+/dist
+
+.env.local
+.env.prod
+.env.dev*
+
+# ignore c++ files
+cpp/
+
+# ignore text of r2 analysis for dll
+r2_*.txt
+r2_*.md
+r2_*.log
+
+# ignore text for ai helper
+src_*.txt
+src_*.md
+src_*.log
+
+# ignore app running logs
+logs/
+
+# 
+snippets/
