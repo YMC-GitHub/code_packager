@@ -1,0 +1,350 @@
+name: Publish to crates.io
+
+on:
+  # push:
+  #   tags:
+  #     - 'v*'  # 推送 v 开头的标签时触发
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      version:
+        description: 'Version tag (格式: v0.1.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (只检查不发布)'
+        required: false
+        default: false
+        type: boolean
+      skip_tests:
+        description: '跳过测试'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+  CRATE_NAME: window-enumerator
+
+jobs:
+  validate:
+    name: Validate Package
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_tests }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Check clippy
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Check documentation
+        run: cargo doc --no-deps --all-features
+
+      - name: Validate package
+        run: cargo package --allow-dirty
+
+      - name: Check version consistency
+        id: version_check
+        run: |
+          # 从 Cargo.toml 获取版本
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)
+          
+          # 从标签获取版本
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ inputs.version }}"
+          else
+            TAG_VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          # 移除标签的 v 前缀
+          TAG_VERSION=${TAG_VERSION#v}
+          
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "Tag version: $TAG_VERSION"
+          
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "❌ 版本不匹配: Cargo.toml ($CARGO_VERSION) 与标签 ($TAG_VERSION) 不一致"
+            exit 1
+          fi
+          
+          echo "✅ 版本检查通过"
+          echo "package_version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validation report
+        run: |
+          echo "✅ 包验证完成"
+          echo "📦 包名: ${{ env.CRATE_NAME }}"
+          echo "🏷️ 版本: ${{ steps.version_check.outputs.package_version }}"
+          echo "🔧 状态: 通过所有检查"
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: validate
+    if: ${{ !inputs.skip_tests }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build with all features
+        run: cargo build --release --all-features
+
+      - name: Run tests on Windows
+        run: cargo test --release --all-features
+
+      - name: Verify library build
+        run: |
+          # 检查是否生成了库文件
+          if (Test-Path "target\release\window_enumerator.dll") {
+            echo "✅ 动态库构建成功"
+            Get-Item "target\release\window_enumerator.dll" | % { 
+              echo "文件: $($_.Name), 大小: $([math]::Round($_.Length/1KB, 2)) KB" 
+            }
+          }
+          if (Test-Path "target\release\window_enumerator.lib") {
+            echo "✅ 静态库构建成功"
+          }
+          if (Test-Path "target\release\window_enumerator.rlib") {
+            echo "✅ Rust 库构建成功"
+          }
+
+      - name: Windows build report
+        run: |
+          echo "✅ Windows 构建测试完成"
+          echo "🎯 目标平台: x86_64-pc-windows-msvc"
+          echo "🔧 特性: 全部启用"
+          echo "🧪 测试: 通过"
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: 
+      - validate
+      - build-windows
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+    environment: cargo-publish
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Set up cargo registry token
+        run: |
+          if [ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
+            echo "🔑 设置 cargo registry token"
+            cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          else
+            echo "❌ 未找到 CARGO_REGISTRY_TOKEN secret"
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        run: cargo publish --verbose
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: |
+          echo "⏳ 等待 crates.io 索引更新..."
+          sleep 30
+
+      - name: Verify publication
+        id: verify
+        run: |
+          # 从 Cargo.toml 获取包名和版本
+          PACKAGE_NAME=$(grep '^name' Cargo.toml | head -1 | cut -d '"' -f2)
+          PACKAGE_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)
+          
+          echo "检查包: $PACKAGE_NAME, 版本: $PACKAGE_VERSION"
+          
+          # 尝试从 crates.io 获取包信息
+          if curl -s "https://crates.io/api/v1/crates/$PACKAGE_NAME" | jq -e ".crate.max_version == \"$PACKAGE_VERSION\"" > /dev/null; then
+            echo "✅ 发布验证成功: $PACKAGE_NAME v$PACKAGE_VERSION 已在 crates.io 上可用"
+            echo "published=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ 发布验证中，可能需要更多时间..."
+            echo "published=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish completion report
+        run: |
+          echo "🚀 发布到 crates.io 完成!"
+          echo "=================================="
+          echo "📦 包名: ${{ env.CRATE_NAME }}"
+          echo "🏷️ 版本: ${{ needs.validate.outputs.package_version }}"
+          echo "🔗 链接: https://crates.io/crates/${{ env.CRATE_NAME }}/${{ needs.validate.outputs.package_version }}"
+          echo "📚 文档: https://docs.rs/${{ env.CRATE_NAME }}/${{ needs.validate.outputs.package_version }}"
+
+  dry-run:
+    name: Dry Run
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Dry run publish
+        run: cargo publish --dry-run --verbose
+
+      - name: Dry run completion
+        run: |
+          echo "✅ Dry run 完成"
+          echo "📦 包验证通过，可以发布"
+          echo "🔍 检查项目:"
+          echo "  - 格式检查: ✅"
+          echo "  - Clippy 检查: ✅" 
+          echo "  - 测试通过: ✅"
+          echo "  - 文档生成: ✅"
+          echo "  - 包验证: ✅"
+          echo "  - Dry run: ✅"
+          echo ""
+          echo "🚀 下一步: 运行工作流时不使用 --dry-run 参数来实际发布"
+
+  post-publish:
+    name: Post Publish
+    runs-on: ubuntu-latest
+    needs: publish
+    if: success()
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          
+          PACKAGE_NAME=$(grep '^name' Cargo.toml | head -1 | cut -d '"' -f2)
+          PACKAGE_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        run: |
+          if [ -f "./scripts/generate-changelog.sh" ]; then
+            chmod +x ./scripts/generate-changelog.sh
+            ./scripts/generate-changelog.sh --version ${{ steps.version.outputs.version }}
+          else
+            echo "⚠️  Changelog 生成脚本未找到，跳过"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.package_name }} v${{ steps.version.outputs.package_version }}
+          body: |
+            # ${{ steps.version.outputs.package_name }} v${{ steps.version.outputs.package_version }}
+            
+            🎉 新版本发布！
+            
+            ## 📦 Crate 信息
+            - **包名**: `${{ steps.version.outputs.package_name }}`
+            - **版本**: `${{ steps.version.outputs.package_version }}`
+            - **文档**: https://docs.rs/${{ steps.version.outputs.package_name }}/${{ steps.version.outputs.package_version }}/
+            - **Crates.io**: https://crates.io/crates/${{ steps.version.outputs.package_name }}/${{ steps.version.outputs.package_version }}
+            
+            ## 🔧 使用方式
+            ```toml
+            [dependencies]
+            ${{ steps.version.outputs.package_name }} = "${{ steps.version.outputs.package_version }}"
+            ```
+            
+            ## 📚 特性
+            - Windows 窗口枚举和过滤
+            - 多条件排序 (PID, 标题, 位置)
+            - 索引选择功能
+            - Windows API 安全封装
+            
+            ## 🏷️ 版本标签
+            `${{ steps.version.outputs.version }}`
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-alpha') || contains(steps.version.outputs.version, '-beta') || contains(steps.version.outputs.version, '-rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Success notification
+        run: |
+          echo "🚀 发布流程完成!"
+          echo "================"
+          echo "📦 包: ${{ steps.version.outputs.package_name }}"
+          echo "🏷️ 版本: v${{ steps.version.outputs.package_version }}"
+          echo "📚 文档: https://docs.rs/${{ steps.version.outputs.package_name }}/${{ steps.version.outputs.package_version }}/"
+          echo "📋 Crates.io: https://crates.io/crates/${{ steps.version.outputs.package_name }}/${{ steps.version.outputs.package_version }}"
+          echo "🔖 GitHub Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}"
