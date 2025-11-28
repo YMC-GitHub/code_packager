@@ -1,0 +1,27 @@
+[package]
+name = "code_packager"
+version = "0.1.0"
+edition = "2021"
+description = "A tool to package source code files into a single text file with syntax formatting"
+authors = ["YeMiancheng <ymc.github@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/YeMiancheng/code_packager"
+readme = "README.md"
+keywords = ["packager", "code", "cli", "utility", "source-code"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+glob = "0.3"
+
+[dev-dependencies]
+tempfile = "3.3"
+
+[[bin]]
+name = "code_packager"
+path = "src/main.rs"
+
+[lib]
+name = "code_packager"
+path = "src/lib.rs"
